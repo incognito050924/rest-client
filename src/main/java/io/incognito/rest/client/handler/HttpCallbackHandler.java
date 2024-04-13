@@ -35,13 +35,13 @@ public interface HttpCallbackHandler<RESP extends IBaseResponse> {
     void onFailed(RESP response);
 
     /**
-     * HTTP 요청 & 응답 처리 중 예외 발생 시 수행할 로직
+     * HTTP 요청/응답 처리 중 예외 발생 시 수행할 로직
      * @param t 예외
      */
     void onError(Throwable t);
 
     /**
-     * HTTP 요청 & 응답 종료 이후 수행할 로직
+     * HTTP 요청 / 응답 종료 이후 수행할 로직
      *
      * @param signalType 처리 결과 타입
      */

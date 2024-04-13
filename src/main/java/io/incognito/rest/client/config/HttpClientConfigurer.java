@@ -39,6 +39,8 @@ public abstract class HttpClientConfigurer {
 
     /**
      * HTTP Connection Pool 설정
+     *
+     * @return ConnectionProvider
      */
     public ConnectionProvider httpConnectionPool() {
         return ConnectionProvider
@@ -50,6 +52,8 @@ public abstract class HttpClientConfigurer {
 
     /**
      * Netty Http Client 설정
+     *
+     * @return HttpClient
      */
     public HttpClient httpApiClient() {
         return HttpClient.create(httpConnectionPool())

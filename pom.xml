@@ -6,7 +6,7 @@
 
     <groupId>io.incognito</groupId>
     <artifactId>rest-client</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 
     <properties>
         <maven.compiler.source>8</maven.compiler.source>
@@ -14,6 +14,14 @@
         <java.version>1.8</java.version>
         <jackson.version>2.15.4</jackson.version>
     </properties>
+
+    <distributionManagement>
+        <repository>
+            <id>incognito-rest-client</id>
+            <name>RestClient</name>
+            <url>https://maven.pkg.github.com/incognito050924/rest-client</url>
+        </repository>
+    </distributionManagement>
 
     <dependencies>
         <dependency>
@@ -95,5 +103,50 @@
             <version>3.5.11</version>
             <scope>test</scope>
         </dependency>
+
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.0.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>2.10.4</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <version>2.8.2</version>
+                <executions>
+                    <execution>
+                        <id>deploy</id>
+                        <phase>deploy</phase>
+<!--                        <goals>-->
+<!--                          <goal>deploy</goal>-->
+<!--                        </goals>-->
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
