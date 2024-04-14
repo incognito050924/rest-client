@@ -15,6 +15,7 @@ import java.util.Optional;
 
 import javax.net.ssl.SSLException;
 
+import io.incognito.rest.client.util.Opt;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.epoll.EpollChannelOption;
 import io.netty.handler.ssl.SslContextBuilder;
@@ -22,6 +23,7 @@ import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
 import lombok.RequiredArgsConstructor;
+import reactor.netty.ConnectionObserver;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
 
@@ -35,6 +37,7 @@ public abstract class HttpClientConfigurer {
         this(timoutSeconds, 1024 * 1024 * 10, 500);
     }
 
+    public abstract ConnectionObserver connectionObserver();
     public abstract ObjectMapper webClientObjectMapper();
 
     /**
@@ -69,6 +72,7 @@ public abstract class HttpClientConfigurer {
                         .addHandlerLast(new ReadTimeoutHandler(TIMEOUT_SECONDS))
                         .addHandlerLast(new WriteTimeoutHandler(TIMEOUT_SECONDS))
                 )
+                .observe(Opt.of(connectionObserver()).orElse(ConnectionObserver.emptyListener()))
                 .secure(spec -> {
                     try {
                         spec.sslContext(SslContextBuilder.forClient().trustManager(InsecureTrustManagerFactory.INSTANCE).build())

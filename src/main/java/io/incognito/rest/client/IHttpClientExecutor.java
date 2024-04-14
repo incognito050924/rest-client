@@ -41,10 +41,12 @@ public interface IHttpClientExecutor<AUTH> extends IHttpClient<AUTH> {
      * @return 응답 객체의 Mono
      */
     default <REQ, RESP extends IBaseResponse> Mono<RESP> executeWithBodyInserterAsync(final BodyInserter<REQ, ? super ClientHttpRequest> request, final MediaType contentType, final Class<RESP> responseType, final Integer retryCount, final HttpCallbackHandler<RESP> handler) {
-        return authorizedBuilder(getAuthorization())
+        final Mono<RESP> respMono = authorizedBuilder(getAuthorization())
                 .headers(headers -> Opt.of(contentType).ifPresent(headers::setContentType))
                 .body(request)
-                .exchangeToMono(clientResponse -> ClientResponseProcessor.handleResponse(clientResponse, responseType, retryCount, handler));
+                .exchangeToMono(clientResponse -> ClientResponseProcessor.handleResponse(clientResponse, responseType, retryCount));
+
+        return ClientResponseProcessor.applyProcessErrorResumeAndSetCallbackHandler(responseType, handler).apply(respMono);
     }
 
     /**
@@ -270,8 +272,10 @@ public interface IHttpClientExecutor<AUTH> extends IHttpClient<AUTH> {
      * @return 응답 객체의 Mono
      */
     default <RESP extends IBaseResponse> Mono<RESP> executeAsync(final Class<RESP> responseType, final Integer retryCount, final HttpCallbackHandler<RESP> handler) {
-        return authorizedBuilder(getAuthorization())
-                .exchangeToMono(clientResponse -> ClientResponseProcessor.handleResponse(clientResponse, responseType, retryCount, handler));
+        final Mono<RESP> respMono = authorizedBuilder(getAuthorization())
+                .exchangeToMono(clientResponse -> ClientResponseProcessor.handleResponse(clientResponse, responseType, retryCount));
+
+        return ClientResponseProcessor.applyProcessErrorResumeAndSetCallbackHandler(responseType, handler).apply(respMono);
     }
 
     /**

@@ -3,6 +3,7 @@ package io.incognito.rest.client.helper;
 import org.springframework.http.HttpStatus;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.ClientResponse;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -40,13 +41,14 @@ public class ClientResponseProcessor {
      *
      * @param resultCode API 결과 코드
      * @param throwable 예외 객체 (실패를 야기한 예외 객체)
+     * @param getFailureMessage 예외 객체로부터 실패 메시지를 추출(생성)하는 함수
      * @param getDetailMessage 예외 객체로부터 상세 메시지를 추출(생성)하는 함수
      * @return API 실패 결과 객체
      */
-    public static ApiResult setupApiResult(final ApiResultCode resultCode, final Throwable throwable, final Function<? super Throwable, String> getDetailMessage) {
+    public static ApiResult setupApiResult(final ApiResultCode resultCode, final Throwable throwable, final Function<? super Throwable, String> getFailureMessage, final Function<? super Throwable, String> getDetailMessage) {
         return ApiResult.builder()
                 .resultCode(Opt.of(resultCode).orElse(ApiResultCode.INVALID_ETC))
-                .failureMessage(throwable.getMessage())
+                .failureMessage(Opt.of(getFailureMessage).flatMap(msgFn -> Opt.of(throwable).map(msgFn)).orElse(null))
                 .failureDetail(Opt.of(getDetailMessage).flatMap(msgFn -> Opt.of(throwable).map(msgFn)).orElse(null))
                 .build();
     }
@@ -86,7 +88,7 @@ public class ClientResponseProcessor {
                             return Mono.error(new ApiFailureException(result));
                         });
             } else {
-                if (TypeUtil.isSubTypeOf(responseType, EmptyOrStringBodyResponse.class)) {
+                if (TypeUtil.isAssignableTypeOf(responseType, EmptyOrStringBodyResponse.class)) {
                     return clientResponse.bodyToMono(String.class)
                             .switchIfEmpty(Mono.just(""))
                             .flatMap(bodyString -> {
@@ -123,60 +125,87 @@ public class ClientResponseProcessor {
      * @param responseType 변환할 타입의 클래스 객체
      * @param retryCount 최대 재시도 횟수 (null 또는 0 이하의 정수 값일 때는 재시도 하지 않음)
      * @param <RESP> 변환할 타입
-     * @param handler HTTP 요청/응답 처리 핸들러
      * @return 변환된 RESP 객체 Mono
      */
-    public static <RESP extends IBaseResponse> Mono<RESP> handleResponse(final ClientResponse clientResponse, final Class<RESP> responseType, final Integer retryCount, final HttpCallbackHandler<RESP> handler) {
-        final Opt<HttpCallbackHandler<RESP>> handlerOpt = Opt.of(handler);
+    public static <RESP extends IBaseResponse> Mono<RESP> handleResponse(final ClientResponse clientResponse, final Class<RESP> responseType, final Integer retryCount) {
         final HttpStatus status = clientResponse.statusCode();
+        return exchangeResponse(responseType).apply(clientResponse)
+                .switchIfEmpty(createResponseInstance(responseType, status))
+                .doOnNext(response -> {
+                    if (response.getApiResult() == null || response.getApiResult().getResultCode() == null) {
+                        response.setApiResult(setupApiResult(clientResponse.statusCode()));
+                    }
+                })
+                // Retry
+                .retryWhen(Retry.backoff(
+                        Opt.of(retryCount).filter(i -> i > 0).orElse(0),
+                        Duration.ofSeconds(1)).onRetryExhaustedThrow(((retryBackoffSpec, retrySignal) -> findApiFailureException(retrySignal.failure()).orElseGet(() -> {
+                                final String message = "Retry exhausted after " + retrySignal.totalRetriesInARow() + " retries.";
+                                final ApiResult failureResult = setupApiResult(ApiResultCode.EXHAUSTED_RETIRES, retrySignal.failure(), err -> message, Throwable::getMessage);
+                                return new ApiFailureException(failureResult, message, retrySignal.failure());
+                            }))))
+                .onErrorResume(ApiFailureException.class, throwable -> createResponseInstance(responseType, status).map(responseInstance -> {
+                    responseInstance.setApiResult(throwable.getFailureResult());
+                    return responseInstance;
+                }));
+    }
+
+    /**
+     * processErrorResumeAndSetCallbackHandler 메서드에 partial application 적용 (ClientResponse 를 처리 중 발생한 예외 처리기를 등록한다.)
+     *
+     * @param responseType 변환할 타입의 클래스 객체
+     * @param handler HTTP 응답 Callback Handler
+     * @param <RESP> Response 타입
+     * @return 예외 처리 로직이 추가된 Response Mono 변환 함수
+     */
+    public static <RESP extends IBaseResponse> Function<Mono<RESP>, Mono<RESP>> applyProcessErrorResumeAndSetCallbackHandler(final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler) {
+        return responseMono -> processErrorResumeAndSetCallbackHandler(responseMono, responseType, handler);
+    }
+
+    /**
+     * ClientResponse 를 처리 중 발생한 예외 처리기를 등록한다.
+     *
+     * @param exchanged Response Mono
+     * @param responseType 변환할 타입의 클래스 객체
+     * @param handler HTTP 응답 Callback Handler
+     * @param <RESP> Response 타입
+     * @return 예외 처리 로직이 추가된 Response Mono
+     */
+    public static <RESP extends IBaseResponse> Mono<RESP> processErrorResumeAndSetCallbackHandler(final Mono<RESP> exchanged, final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler) {
+        final Opt<HttpCallbackHandler<RESP>> handlerOpt = Opt.of(handler);
+        final HttpStatus status = HttpStatus.BAD_GATEWAY;
         try {
-            return exchangeResponse(responseType).apply(clientResponse)
-                    .switchIfEmpty(createResponseInstance(responseType, status))
-                    .doOnNext(response -> {
-                        if (response.getApiResult() == null || response.getApiResult().getResultCode() == null) {
-                            response.setApiResult(setupApiResult(clientResponse.statusCode()));
-                        }
-                    })
-                    // Retry
-                    .retryWhen(Retry.backoff(
-                            Opt.of(retryCount).filter(i -> i > 0).orElse(0),
-                            Duration.ofSeconds(1)).onRetryExhaustedThrow(((retryBackoffSpec, retrySignal) -> new RuntimeException("Retry exhausted after " + retrySignal.totalRetriesInARow() + " retries.", retrySignal.failure()))))
+            return exchanged
                     // Timeout Exception Handling
                     .onErrorResume(ReadTimeoutException.class, throwable -> createResponseInstance(responseType, status)
                             .map(responseInstance -> {
-                                responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_NETWORK, throwable, err -> "Request Timeout"));
+                                responseInstance.setApiResult(setupApiResult(ApiResultCode.CONNECTION_TIMEOUT, throwable, err -> "Request Timeout", Throwable::getMessage));
                                 return responseInstance;
                             }))
                     // Timeout Exception Handling
                     .onErrorResume(SslHandshakeTimeoutException.class, throwable -> createResponseInstance(responseType, status)
                             .map(responseInstance -> {
-                                responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_NETWORK, throwable, err -> "SSL Handshake Timeout"));
+                                responseInstance.setApiResult(setupApiResult(ApiResultCode.CONNECTION_FAIL, throwable, err -> "SSL Handshake Timeout", Throwable::getMessage));
                                 return responseInstance;
                             }))
-                    .onErrorResume(ApiFailureException.class, throwable -> createResponseInstance(responseType, status).map(responseInstance -> {
-                        responseInstance.setApiResult(throwable.getFailureResult());
-                        return responseInstance;
-                    }))
+                    // Timeout Exception Handling
+                    .onErrorResume(WebClientRequestException.class, throwable -> createResponseInstance(responseType, status)
+                            .map(responseInstance -> {
+                                responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_NETWORK, throwable, err -> "Failed to connect to the server", Throwable::getMessage));
+                                return responseInstance;
+                            }))
                     // Fallback Exception Handling
-                    .onErrorResume(throwable -> {
-                        final Optional<ApiFailureException> ApiFailureException = findApiFailureException(throwable);
-                        return ApiFailureException.map(e -> createResponseInstance(responseType, status)
-                                        .map(responseInstance -> {
-                                            responseInstance.setApiResult(e.getFailureResult());
-                                            return responseInstance;
-                                        }))
-                                .orElseGet(() -> createResponseInstance(responseType, status)
-                                        .map(responseInstance -> {
-                                            responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_SYSTEM, throwable, err -> {
-                                                // Failure Detail 값 생성
-                                                return Opt.of(err.getCause())
-                                                        .map(Throwable::getMessage)
-                                                        .map(msg -> String.format("Cause: %s", msg))
-                                                        .orElse(null);
-                                            }));
-                                            return responseInstance;
-                                        }));
-                    })
+                    .onErrorResume(throwable -> !findApiFailureException(throwable).isPresent(), throwable -> createResponseInstance(responseType, HttpStatus.INTERNAL_SERVER_ERROR)
+                            .map(responseInstance -> {
+                                responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_SYSTEM, throwable, Throwable::getMessage, err -> {
+                                    // Failure Detail 값 생성
+                                    return Opt.of(err.getCause())
+                                            .map(Throwable::getMessage)
+                                            .map(msg -> String.format("Cause: %s", msg))
+                                            .orElse(null);
+                                }));
+                                return responseInstance;
+                            }))
                     .doOnSuccess(resp -> handlerOpt.ifPresent(handle -> handle.onResponse(resp)))
                     .doOnError(err -> handlerOpt.ifPresent(handle -> handle.onError(err)))
                     .doFinally(signal -> handlerOpt.ifPresent(handle -> handle.afterFinished(signal)));
@@ -184,7 +213,7 @@ public class ClientResponseProcessor {
             handlerOpt.ifPresent(handle -> handle.onError(e));
             throw e;
         }
-    }
+}
 
     static Optional<ApiFailureException> findApiFailureException(final Throwable throwable) {
         if (throwable instanceof ApiFailureException) {
