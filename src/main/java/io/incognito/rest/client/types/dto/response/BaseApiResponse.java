@@ -8,8 +8,12 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import lombok.ToString;
+import lombok.experimental.SuperBuilder;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
+@SuperBuilder
+@ToString(callSuper = true)
 @AllArgsConstructor
 @NoArgsConstructor
 @Getter
