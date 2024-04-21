@@ -98,7 +98,7 @@ public class ClientResponseProcessor {
                                         return responseType.cast(emptyOrStringBodyResponse);
                                     });
                                 } catch (final Exception e) {
-                                    return Mono.error(new ApiFailureException(deserializeFailure(statusCode, e.getMessage()), e.getMessage(), e));
+                                    return Mono.error(new ApiFailureException(deserializeFailure(statusCode, bodyString), e.getMessage(), e));
                                 }
                             });
                 }
