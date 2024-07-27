@@ -1,6 +1,7 @@
 package io.incognito.rest.client.helper;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
@@ -27,11 +28,13 @@ public class ClientResponseProcessor {
      * HTTP 상태를 기반으로 API 결과 객체를 생성한다.
      *
      * @param status HTTP 상태 코드
+     * @param responseHeaders API 응답 헤더
      * @return API 결과 객체
      */
-    public static ApiResult setupApiResult(final HttpStatus status) {
+    public static ApiResult setupApiResult(final HttpStatus status, final MultiValueMap<String, String> responseHeaders) {
         return ApiResult.builder()
                 .status(status)
+                .responseHeaders(responseHeaders)
                 .resultCode(ApiResultCode.fromHttpStatus(status))
                 .build();
     }
@@ -40,14 +43,16 @@ public class ClientResponseProcessor {
      * API 실패 결과 객체를 생성한다.
      *
      * @param resultCode API 결과 코드
+     * @param responseHeaders API 응답 헤더
      * @param throwable 예외 객체 (실패를 야기한 예외 객체)
      * @param getFailureMessage 예외 객체로부터 실패 메시지를 추출(생성)하는 함수
      * @param getDetailMessage 예외 객체로부터 상세 메시지를 추출(생성)하는 함수
      * @return API 실패 결과 객체
      */
-    public static ApiResult setupApiResult(final ApiResultCode resultCode, final Throwable throwable, final Function<? super Throwable, String> getFailureMessage, final Function<? super Throwable, String> getDetailMessage) {
+    public static ApiResult setupApiResult(final ApiResultCode resultCode, final MultiValueMap<String, String> responseHeaders, final Throwable throwable, final Function<? super Throwable, String> getFailureMessage, final Function<? super Throwable, String> getDetailMessage) {
         return ApiResult.builder()
                 .resultCode(Opt.of(resultCode).orElse(ApiResultCode.INVALID_ETC))
+                .responseHeaders(responseHeaders)
                 .failureMessage(Opt.of(getFailureMessage).flatMap(msgFn -> Opt.of(throwable).map(msgFn)).orElse(null))
                 .failureDetail(Opt.of(getDetailMessage).flatMap(msgFn -> Opt.of(throwable).map(msgFn)).orElse(null))
                 .build();
@@ -60,11 +65,11 @@ public class ClientResponseProcessor {
      * @param <RESP> 생성할 타입
      * @return 생성된 객체
      */
-    public static <RESP extends IBaseResponse> Mono<RESP> createResponseInstance(final Class<RESP> responseType, final HttpStatus status) {
+    public static <RESP extends IBaseResponse> Mono<RESP> createResponseInstance(final Class<RESP> responseType, final HttpStatus status, final MultiValueMap<String, String> responseHeaders) {
         try {
             return Mono.just(Opt.of(responseType).get().newInstance());
         } catch (InstantiationException | IllegalAccessException e) {
-            return Mono.error(new ApiFailureException(deserializeFailure(status, e.getMessage()), e.getMessage(), e));
+            return Mono.error(new ApiFailureException(deserializeFailure(status, responseHeaders, e.getMessage()), e.getMessage(), e));
         }
     }
 
@@ -78,11 +83,12 @@ public class ClientResponseProcessor {
     public static <RESP extends IBaseResponse> Function<ClientResponse, ? extends Mono<RESP>> exchangeResponse(final Class<RESP> responseType) {
         return clientResponse -> {
             final HttpStatus statusCode = clientResponse.statusCode();
+            final MultiValueMap<String, String> responseHeaders = Opt.of(clientResponse.headers()).map(ClientResponse.Headers::asHttpHeaders).orElseGet(null);;
             if (clientResponse.statusCode().is4xxClientError() || clientResponse.statusCode().is5xxServerError()) {
                 return clientResponse.bodyToMono(String.class)
                         .switchIfEmpty(Mono.just(""))
                         .flatMap(body -> {
-                            final ApiResult result = setupApiResult(statusCode);
+                            final ApiResult result = setupApiResult(statusCode, responseHeaders);
                             result.setFailureDetail(Opt.of(body).filter(StringUtils::hasText).orElse(null));
                             result.setFailureMessage(String.format("Failed to call API. Status Code: [%d] %s", statusCode.value(), statusCode.getReasonPhrase()));
                             return Mono.error(new ApiFailureException(result));
@@ -93,23 +99,25 @@ public class ClientResponseProcessor {
                             .switchIfEmpty(Mono.just(""))
                             .flatMap(bodyString -> {
                                 try {
-                                    return createResponseInstance(EmptyOrStringBodyResponse.class, statusCode).map(emptyOrStringBodyResponse -> {
+                                    return createResponseInstance(EmptyOrStringBodyResponse.class, statusCode, responseHeaders).map(emptyOrStringBodyResponse -> {
                                         emptyOrStringBodyResponse.setBodyString(bodyString);
                                         return responseType.cast(emptyOrStringBodyResponse);
                                     });
                                 } catch (final Exception e) {
-                                    return Mono.error(new ApiFailureException(deserializeFailure(statusCode, bodyString), e.getMessage(), e));
+                                    return Mono.error(new ApiFailureException(deserializeFailure(statusCode, responseHeaders, bodyString), e.getMessage(), e));
                                 }
-                            });
+                            })
+                            .doOnNext(resp -> resp.setApiResult(setupApiResult(statusCode, responseHeaders)));
                 }
                 return clientResponse.bodyToMono(responseType)
                         .switchIfEmpty(Mono.defer(() -> {
                             try {
                                 return Mono.just(responseType.newInstance());
                             } catch (final Exception e) {
-                                return Mono.error(new ApiFailureException(deserializeFailure(statusCode, e.getMessage()), e.getMessage(), e));
+                                return Mono.error(new ApiFailureException(deserializeFailure(statusCode, responseHeaders, e.getMessage()), e.getMessage(), e));
                             }
-                        }));
+                        }))
+                        .doOnNext(resp -> resp.setApiResult(setupApiResult(statusCode, responseHeaders)));
             }
         };
     }
@@ -129,11 +137,12 @@ public class ClientResponseProcessor {
      */
     public static <RESP extends IBaseResponse> Mono<RESP> handleResponse(final ClientResponse clientResponse, final Class<RESP> responseType, final Integer retryCount) {
         final HttpStatus status = clientResponse.statusCode();
+        final MultiValueMap<String, String> responseHeaders = Opt.of(clientResponse.headers()).map(ClientResponse.Headers::asHttpHeaders).orElseGet(null);
         return exchangeResponse(responseType).apply(clientResponse)
-                .switchIfEmpty(createResponseInstance(responseType, status))
+                .switchIfEmpty(createResponseInstance(responseType, status, responseHeaders))
                 .doOnNext(response -> {
                     if (response.getApiResult() == null || response.getApiResult().getResultCode() == null) {
-                        response.setApiResult(setupApiResult(clientResponse.statusCode()));
+                        response.setApiResult(setupApiResult(clientResponse.statusCode(), responseHeaders));
                     }
                 })
                 // Retry
@@ -141,10 +150,10 @@ public class ClientResponseProcessor {
                         Opt.of(retryCount).filter(i -> i > 0).orElse(0),
                         Duration.ofSeconds(1)).onRetryExhaustedThrow(((retryBackoffSpec, retrySignal) -> findApiFailureException(retrySignal.failure()).orElseGet(() -> {
                                 final String message = "Retry exhausted after " + retrySignal.totalRetriesInARow() + " retries.";
-                                final ApiResult failureResult = setupApiResult(ApiResultCode.EXHAUSTED_RETIRES, retrySignal.failure(), err -> message, Throwable::getMessage);
+                                final ApiResult failureResult = setupApiResult(ApiResultCode.EXHAUSTED_RETIRES, responseHeaders, retrySignal.failure(), err -> message, Throwable::getMessage);
                                 return new ApiFailureException(failureResult, message, retrySignal.failure());
                             }))))
-                .onErrorResume(ApiFailureException.class, throwable -> createResponseInstance(responseType, status).map(responseInstance -> {
+                .onErrorResume(ApiFailureException.class, throwable -> createResponseInstance(responseType, status, responseHeaders).map(responseInstance -> {
                     responseInstance.setApiResult(throwable.getFailureResult());
                     return responseInstance;
                 }));
@@ -177,27 +186,27 @@ public class ClientResponseProcessor {
         try {
             return exchanged
                     // Timeout Exception Handling
-                    .onErrorResume(ReadTimeoutException.class, throwable -> createResponseInstance(responseType, status)
+                    .onErrorResume(ReadTimeoutException.class, throwable -> createResponseInstance(responseType, status, null)
                             .map(responseInstance -> {
-                                responseInstance.setApiResult(setupApiResult(ApiResultCode.CONNECTION_TIMEOUT, throwable, err -> "Request Timeout", Throwable::getMessage));
+                                responseInstance.setApiResult(setupApiResult(ApiResultCode.CONNECTION_TIMEOUT, null, throwable, err -> "Request Timeout", Throwable::getMessage));
                                 return responseInstance;
                             }))
                     // Timeout Exception Handling
-                    .onErrorResume(SslHandshakeTimeoutException.class, throwable -> createResponseInstance(responseType, status)
+                    .onErrorResume(SslHandshakeTimeoutException.class, throwable -> createResponseInstance(responseType, status, null)
                             .map(responseInstance -> {
-                                responseInstance.setApiResult(setupApiResult(ApiResultCode.CONNECTION_FAIL, throwable, err -> "SSL Handshake Timeout", Throwable::getMessage));
+                                responseInstance.setApiResult(setupApiResult(ApiResultCode.CONNECTION_FAIL, null, throwable, err -> "SSL Handshake Timeout", Throwable::getMessage));
                                 return responseInstance;
                             }))
                     // Timeout Exception Handling
-                    .onErrorResume(WebClientRequestException.class, throwable -> createResponseInstance(responseType, status)
+                    .onErrorResume(WebClientRequestException.class, throwable -> createResponseInstance(responseType, status, null)
                             .map(responseInstance -> {
-                                responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_NETWORK, throwable, err -> "Failed to connect to the server", Throwable::getMessage));
+                                responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_NETWORK, null, throwable, err -> "Failed to connect to the server", Throwable::getMessage));
                                 return responseInstance;
                             }))
                     // Fallback Exception Handling
-                    .onErrorResume(throwable -> !findApiFailureException(throwable).isPresent(), throwable -> createResponseInstance(responseType, HttpStatus.INTERNAL_SERVER_ERROR)
+                    .onErrorResume(throwable -> !findApiFailureException(throwable).isPresent(), throwable -> createResponseInstance(responseType, HttpStatus.INTERNAL_SERVER_ERROR, null)
                             .map(responseInstance -> {
-                                responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_SYSTEM, throwable, Throwable::getMessage, err -> {
+                                responseInstance.setApiResult(setupApiResult(ApiResultCode.INVALID_SYSTEM, null, throwable, Throwable::getMessage, err -> {
                                     // Failure Detail 값 생성
                                     return Opt.of(err.getCause())
                                             .map(Throwable::getMessage)
@@ -224,10 +233,11 @@ public class ClientResponseProcessor {
         return Optional.empty();
     }
 
-    static ApiResult deserializeFailure(final HttpStatus status, final String detailMessage) {
+    static ApiResult deserializeFailure(final HttpStatus status, final MultiValueMap<String, String> respHeaders, final String detailMessage) {
         return ApiResult.builder()
                 .resultCode(ApiResultCode.FAILED_TO_DESERIALIZE)
                 .status(status)
+                .responseHeaders(respHeaders)
                 .failureMessage(String.format("Given HttpStatus %s. But, Failed to instantiation with default constructor.", status))
                 .failureDetail(detailMessage)
                 .build();
