@@ -14,7 +14,7 @@ import io.incognito.rest.client.handler.HttpCallbackHandler;
 import io.incognito.rest.client.helper.ClientResponseProcessor;
 import io.incognito.rest.client.types.dto.response.EmptyOrStringBodyResponse;
 import io.incognito.rest.client.types.dto.response.IBaseResponse;
-import io.incognito.rest.client.util.MapUtil;
+import io.incognito.rest.client.util.MultiValueMaps;
 import io.incognito.rest.client.util.Opt;
 import reactor.core.publisher.Mono;
 
@@ -342,9 +342,9 @@ public interface IHttpClientExecutor<AUTH> extends IHttpClient<AUTH> {
     default WebClient.RequestBodySpec authorizedBuilder(final AUTH auth) {
         final WebClient.RequestBodySpec builder = getWebClient().method(getMethod())
                 .uri(uriBuilder -> uriBuilder.path(getUrl())
-                        .queryParams(Opt.of(getQueryParam()).orElse(MapUtil.convertMultiValueMap(new HashMap<>())))
+                        .queryParams(Opt.of(getQueryParam()).orElse(MultiValueMaps.convertMultiValueMap(new HashMap<>())))
                         .build(Opt.of(getPathVariables()).orElse(Collections.emptyMap())))
-                .headers(headers -> headers.putAll(Opt.of(getRequestHeaders()).orElse(MapUtil.convertMultiValueMap(new HashMap<>()))));
+                .headers(headers -> headers.putAll(Opt.of(getRequestHeaders()).orElse(MultiValueMaps.convertMultiValueMap(new HashMap<>()))));
         authorize(builder, auth);
         return builder;
     }
