@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.function.Function;
 
+import io.incognito.rest.client.IHttpClientExecutor;
 import io.incognito.rest.client.exceptions.ApiFailureException;
 import io.incognito.rest.client.handler.HttpCallbackHandler;
 import io.incognito.rest.client.types.dto.ApiResult;
@@ -82,8 +83,11 @@ public class ClientResponseProcessor {
      */
     public static <RESP extends IBaseResponse> Function<ClientResponse, ? extends Mono<RESP>> exchangeResponse(final Class<RESP> responseType) {
         return clientResponse -> {
+            // HTTP 응답 상태 코드와 헤더를 가져온다.
             final HttpStatus statusCode = clientResponse.statusCode();
             final MultiValueMap<String, String> responseHeaders = Opt.of(clientResponse.headers()).map(ClientResponse.Headers::asHttpHeaders).orElseGet(null);;
+
+            // 응답 상태 코드가 4xx, 5xx 이면 HTTP 통신 실패로 간주한다.
             if (clientResponse.statusCode().is4xxClientError() || clientResponse.statusCode().is5xxServerError()) {
                 return clientResponse.bodyToMono(String.class)
                         .switchIfEmpty(Mono.just(""))
@@ -93,7 +97,8 @@ public class ClientResponseProcessor {
                             result.setFailureMessage(String.format("Failed to call API. Status Code: [%d] %s", statusCode.value(), statusCode.getReasonPhrase()));
                             return Mono.error(new ApiFailureException(result));
                         });
-            } else {
+            } else { // 정상 응답 처리
+                // EmptyOrStringBodyResponse 타입의 응답 처리 (예: empty response body 응답 또는 문자열 응답)
                 if (TypeUtil.isAssignableTypeOf(responseType, EmptyOrStringBodyResponse.class)) {
                     return clientResponse.bodyToMono(String.class)
                             .switchIfEmpty(Mono.just(""))
@@ -109,6 +114,7 @@ public class ClientResponseProcessor {
                             })
                             .doOnNext(resp -> resp.setApiResult(setupApiResult(statusCode, responseHeaders)));
                 }
+                // 일반적인 응답 처리 (응답 바디를 RESP 타입으로 변환)
                 return clientResponse.bodyToMono(responseType)
                         .switchIfEmpty(Mono.defer(() -> {
                             try {
@@ -167,8 +173,8 @@ public class ClientResponseProcessor {
      * @param <RESP> Response 타입
      * @return 예외 처리 로직이 추가된 Response Mono 변환 함수
      */
-    public static <RESP extends IBaseResponse> Function<Mono<RESP>, Mono<RESP>> applyProcessErrorResumeAndSetCallbackHandler(final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler) {
-        return responseMono -> processErrorResumeAndSetCallbackHandler(responseMono, responseType, handler);
+    public static <RESP extends IBaseResponse> Function<Mono<RESP>, Mono<RESP>> applyProcessErrorResumeAndSetCallbackHandler(final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler, final IHttpClientExecutor.Context<?> context) {
+        return responseMono -> processErrorResumeAndSetCallbackHandler(responseMono, responseType, handler, context);
     }
 
     /**
@@ -180,7 +186,7 @@ public class ClientResponseProcessor {
      * @param <RESP> Response 타입
      * @return 예외 처리 로직이 추가된 Response Mono
      */
-    public static <RESP extends IBaseResponse> Mono<RESP> processErrorResumeAndSetCallbackHandler(final Mono<RESP> exchanged, final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler) {
+    public static <RESP extends IBaseResponse, CTX extends IHttpClientExecutor.Context<?>> Mono<RESP> processErrorResumeAndSetCallbackHandler(final Mono<RESP> exchanged, final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler, final CTX context) {
         final Opt<HttpCallbackHandler<RESP>> handlerOpt = Opt.of(handler);
         final HttpStatus status = HttpStatus.BAD_GATEWAY;
         try {
@@ -215,11 +221,11 @@ public class ClientResponseProcessor {
                                 }));
                                 return responseInstance;
                             }))
-                    .doOnSuccess(resp -> handlerOpt.ifPresent(handle -> handle.onResponse(resp)))
-                    .doOnError(err -> handlerOpt.ifPresent(handle -> handle.onError(err)))
-                    .doFinally(signal -> handlerOpt.ifPresent(handle -> handle.afterFinished(signal)));
+                    .doOnSuccess(resp -> handlerOpt.ifPresent(handle -> handle.onResponse(resp, context)))
+                    .doOnError(err -> handlerOpt.ifPresent(handle -> handle.onError(err, context)))
+                    .doFinally(signal -> handlerOpt.ifPresent(handle -> handle.afterFinished(signal, context)));
         } catch (final Exception e) {
-            handlerOpt.ifPresent(handle -> handle.onError(e));
+            handlerOpt.ifPresent(handle -> handle.onError(e, context));
             throw e;
         }
 }

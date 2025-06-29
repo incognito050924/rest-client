@@ -6,7 +6,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.Map;
 
-public interface IHttpClient<AUTH> {
+public interface IHttpRequest<AUTH> {
     WebClient getWebClient();
     HttpMethod getMethod();
     String getUrl();

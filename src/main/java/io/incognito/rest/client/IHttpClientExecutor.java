@@ -12,13 +12,15 @@ import java.util.HashMap;
 
 import io.incognito.rest.client.handler.HttpCallbackHandler;
 import io.incognito.rest.client.helper.ClientResponseProcessor;
+import io.incognito.rest.client.types.dto.ClientContextImpl;
 import io.incognito.rest.client.types.dto.response.EmptyOrStringBodyResponse;
 import io.incognito.rest.client.types.dto.response.IBaseResponse;
 import io.incognito.rest.client.util.MultiValueMaps;
 import io.incognito.rest.client.util.Opt;
 import reactor.core.publisher.Mono;
 
-public interface IHttpClientExecutor<AUTH> extends IHttpClient<AUTH> {
+public interface IHttpClientExecutor<AUTH> extends IHttpRequest<AUTH> {
+
 
     <S extends WebClient.RequestHeadersSpec<?>> void authorize(S builder, AUTH auth);
 
@@ -41,12 +43,15 @@ public interface IHttpClientExecutor<AUTH> extends IHttpClient<AUTH> {
      * @return 응답 객체의 Mono
      */
     default <REQ, RESP extends IBaseResponse> Mono<RESP> executeWithBodyInserterAsync(final BodyInserter<REQ, ? super ClientHttpRequest> request, final MediaType contentType, final Class<RESP> responseType, final Integer retryCount, final HttpCallbackHandler<RESP> handler) {
+        final ClientContextImpl<IHttpRequest<AUTH>> context = new ClientContextImpl<>(this);
+        // 요청 stream을 생성하고 요청 파라미터를 설정
         final Mono<RESP> respMono = authorizedBuilder(getAuthorization())
                 .headers(headers -> Opt.of(contentType).ifPresent(headers::setContentType))
                 .body(request)
+                .httpRequest(context::setHttpRequest)
                 .exchangeToMono(clientResponse -> ClientResponseProcessor.handleResponse(clientResponse, responseType, retryCount));
 
-        return ClientResponseProcessor.applyProcessErrorResumeAndSetCallbackHandler(responseType, handler).apply(respMono);
+        return ClientResponseProcessor.applyProcessErrorResumeAndSetCallbackHandler(responseType, handler, context).apply(respMono);
     }
 
     /**
@@ -184,7 +189,8 @@ public interface IHttpClientExecutor<AUTH> extends IHttpClient<AUTH> {
      * @return 응답 객체의 Mono
      */
     default <RESP extends IBaseResponse> Mono<RESP> executeWithFormDataAsync(final MultipartBodyBuilder formDataBuilder, final Class<RESP> responseType, final Integer retryCount, final HttpCallbackHandler<RESP> handler) {
-        return executeWithBodyInserterAsync(BodyInserters.fromMultipartData(formDataBuilder.build()), MediaType.MULTIPART_FORM_DATA, responseType, retryCount, handler);
+        final BodyInserters.MultipartInserter multipartInserter = BodyInserters.fromMultipartData(formDataBuilder.build());
+        return executeWithBodyInserterAsync(multipartInserter, MediaType.MULTIPART_FORM_DATA, responseType, retryCount, handler);
     }
 
     /**
@@ -272,10 +278,12 @@ public interface IHttpClientExecutor<AUTH> extends IHttpClient<AUTH> {
      * @return 응답 객체의 Mono
      */
     default <RESP extends IBaseResponse> Mono<RESP> executeAsync(final Class<RESP> responseType, final Integer retryCount, final HttpCallbackHandler<RESP> handler) {
+        final ClientContextImpl<IHttpRequest<AUTH>> context = new ClientContextImpl<>(this);
         final Mono<RESP> respMono = authorizedBuilder(getAuthorization())
+                .httpRequest(context::setHttpRequest)
                 .exchangeToMono(clientResponse -> ClientResponseProcessor.handleResponse(clientResponse, responseType, retryCount));
 
-        return ClientResponseProcessor.applyProcessErrorResumeAndSetCallbackHandler(responseType, handler).apply(respMono);
+        return ClientResponseProcessor.applyProcessErrorResumeAndSetCallbackHandler(responseType, handler, context).apply(respMono);
     }
 
     /**
@@ -347,5 +355,13 @@ public interface IHttpClientExecutor<AUTH> extends IHttpClient<AUTH> {
                 .headers(headers -> headers.putAll(Opt.of(getRequestHeaders()).orElse(MultiValueMaps.convertMultiValueMap(new HashMap<>()))));
         authorize(builder, auth);
         return builder;
+    }
+
+    interface Context<R extends IHttpRequest<?>> {
+        R getRequestConfig();
+        void setRequestConfig(R requestConfig);
+
+        ClientHttpRequest getHttpRequest();
+        void setHttpRequest(ClientHttpRequest httpRequest);
     }
 }
