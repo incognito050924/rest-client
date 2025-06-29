@@ -84,7 +84,7 @@ public class ClientResponseProcessor {
     public static <RESP extends IBaseResponse> Function<ClientResponse, ? extends Mono<RESP>> exchangeResponse(final Class<RESP> responseType) {
         return clientResponse -> {
             // HTTP 응답 상태 코드와 헤더를 가져온다.
-            final HttpStatus statusCode = clientResponse.statusCode();
+            final HttpStatus statusCode = HttpStatus.valueOf(clientResponse.statusCode().value());
             final MultiValueMap<String, String> responseHeaders = Opt.of(clientResponse.headers()).map(ClientResponse.Headers::asHttpHeaders).orElseGet(null);;
 
             // 응답 상태 코드가 4xx, 5xx 이면 HTTP 통신 실패로 간주한다.
@@ -142,13 +142,13 @@ public class ClientResponseProcessor {
      * @return 변환된 RESP 객체 Mono
      */
     public static <RESP extends IBaseResponse> Mono<RESP> handleResponse(final ClientResponse clientResponse, final Class<RESP> responseType, final Integer retryCount) {
-        final HttpStatus status = clientResponse.statusCode();
+        final HttpStatus status = HttpStatus.valueOf(clientResponse.statusCode().value());
         final MultiValueMap<String, String> responseHeaders = Opt.of(clientResponse.headers()).map(ClientResponse.Headers::asHttpHeaders).orElseGet(null);
         return exchangeResponse(responseType).apply(clientResponse)
                 .switchIfEmpty(createResponseInstance(responseType, status, responseHeaders))
                 .doOnNext(response -> {
                     if (response.getApiResult() == null || response.getApiResult().getResultCode() == null) {
-                        response.setApiResult(setupApiResult(clientResponse.statusCode(), responseHeaders));
+                        response.setApiResult(setupApiResult(status, responseHeaders));
                     }
                 })
                 // Retry
