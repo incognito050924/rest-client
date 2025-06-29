@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.incognito</groupId>
-    <artifactId>rest-client</artifactId>
-    <version>1.0.2-RELEASE</version>
+    <artifactId>rest-client-spring5</artifactId>
+    <version>1.0.0-RELEASE</version>
 
     <properties>
         <maven.compiler.source>8</maven.compiler.source>
