@@ -10,9 +10,10 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.function.Function;
 
-import io.incognito.rest.client.IHttpClientExecutor;
+import io.incognito.rest.client.HttpClientExecutors;
 import io.incognito.rest.client.exceptions.ApiFailureException;
 import io.incognito.rest.client.handler.HttpCallbackHandler;
+import io.incognito.rest.client.types.IHttpApiContext;
 import io.incognito.rest.client.types.dto.ApiResult;
 import io.incognito.rest.client.types.dto.response.EmptyOrStringBodyResponse;
 import io.incognito.rest.client.types.dto.response.IBaseResponse;
@@ -138,10 +139,11 @@ public class ClientResponseProcessor {
      * @param clientResponse ClientResponse 객체
      * @param responseType 변환할 타입의 클래스 객체
      * @param retryCount 최대 재시도 횟수 (null 또는 0 이하의 정수 값일 때는 재시도 하지 않음)
+     * @param retryDelay 재시도 간격 (null일 경우 기본값 1초 사용)
      * @param <RESP> 변환할 타입
      * @return 변환된 RESP 객체 Mono
      */
-    public static <RESP extends IBaseResponse> Mono<RESP> handleResponse(final ClientResponse clientResponse, final Class<RESP> responseType, final Integer retryCount) {
+    public static <RESP extends IBaseResponse> Mono<RESP> handleResponse(final ClientResponse clientResponse, final Class<RESP> responseType, final Integer retryCount, final Duration retryDelay) {
         final HttpStatus status = HttpStatus.valueOf(clientResponse.statusCode().value());
         final MultiValueMap<String, String> responseHeaders = Opt.of(clientResponse.headers()).map(ClientResponse.Headers::asHttpHeaders).orElseGet(null);
         return exchangeResponse(responseType).apply(clientResponse)
@@ -154,7 +156,7 @@ public class ClientResponseProcessor {
                 // Retry
                 .retryWhen(Retry.backoff(
                         Opt.of(retryCount).filter(i -> i > 0).orElse(0),
-                        Duration.ofSeconds(1)).onRetryExhaustedThrow(((retryBackoffSpec, retrySignal) -> findApiFailureException(retrySignal.failure()).orElseGet(() -> {
+                        Opt.of(retryDelay).orElse(Duration.ofSeconds(1))).onRetryExhaustedThrow(((retryBackoffSpec, retrySignal) -> findApiFailureException(retrySignal.failure()).orElseGet(() -> {
                                 final String message = "Retry exhausted after " + retrySignal.totalRetriesInARow() + " retries.";
                                 final ApiResult failureResult = setupApiResult(ApiResultCode.EXHAUSTED_RETIRES, responseHeaders, retrySignal.failure(), err -> message, Throwable::getMessage);
                                 return new ApiFailureException(failureResult, message, retrySignal.failure());
@@ -173,7 +175,7 @@ public class ClientResponseProcessor {
      * @param <RESP> Response 타입
      * @return 예외 처리 로직이 추가된 Response Mono 변환 함수
      */
-    public static <RESP extends IBaseResponse> Function<Mono<RESP>, Mono<RESP>> applyProcessErrorResumeAndSetCallbackHandler(final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler, final IHttpClientExecutor.Context<?> context) {
+    public static <RESP extends IBaseResponse> Function<Mono<RESP>, Mono<RESP>> applyProcessErrorResumeAndSetCallbackHandler(final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler, final IHttpApiContext<?> context) {
         return responseMono -> processErrorResumeAndSetCallbackHandler(responseMono, responseType, handler, context);
     }
 
@@ -186,7 +188,7 @@ public class ClientResponseProcessor {
      * @param <RESP> Response 타입
      * @return 예외 처리 로직이 추가된 Response Mono
      */
-    public static <RESP extends IBaseResponse, CTX extends IHttpClientExecutor.Context<?>> Mono<RESP> processErrorResumeAndSetCallbackHandler(final Mono<RESP> exchanged, final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler, final CTX context) {
+    public static <RESP extends IBaseResponse, CTX extends IHttpApiContext<?>> Mono<RESP> processErrorResumeAndSetCallbackHandler(final Mono<RESP> exchanged, final Class<RESP> responseType, final HttpCallbackHandler<RESP> handler, final CTX context) {
         final Opt<HttpCallbackHandler<RESP>> handlerOpt = Opt.of(handler);
         final HttpStatus status = HttpStatus.BAD_GATEWAY;
         try {

@@ -14,4 +14,6 @@ public interface IHttpRequest<AUTH> {
     MultiValueMap<String, String> getQueryParam();
     Map<String, String> getPathVariables();
     AUTH getAuthorization();
+
+    <S extends WebClient.RequestHeadersSpec<?>> void authorize(final S builder, final AUTH auth);
 }

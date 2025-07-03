@@ -15,7 +15,7 @@ import lombok.experimental.Delegate;
 @NoArgsConstructor
 @Getter
 @Setter
-public class MapResponse<K, V> extends BaseApiResponse implements Map<K, V> {
+public abstract class MapResponse<K, V> extends BaseApiResponse implements Map<K, V> {
     @Delegate
     protected Map<K, V> map = new ConcurrentHashMap<>();
 }
