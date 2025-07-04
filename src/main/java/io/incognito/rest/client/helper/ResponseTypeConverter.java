@@ -3,6 +3,8 @@ package io.incognito.rest.client.helper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.springframework.util.StringUtils;
+
 import java.lang.reflect.Type;
 import java.util.Arrays;
 import java.util.stream.Collectors;
@@ -26,16 +28,38 @@ public class ResponseTypeConverter {
     }
 
     public static <R extends BaseApiResponse> R convertEmptyOrStringBodyResponseType(final EmptyOrStringBodyResponse response, final Class<R> targetType, final ObjectMapper objectMapper) {
-        return new ResponseTypeMapper(objectMapper).convertResponseType(response, targetType);
-    }
-
-    public static <R extends BaseApiResponse> R convertEmptyOrStringBodyResponseType(final EmptyOrStringBodyResponse response, final TypeReference<R> targetType, final ObjectMapper objectMapper) {
-        return new ResponseTypeMapper(objectMapper).convertResponseType(response, targetType);
+        return new ResponseTypeMapper(objectMapper).convertEmptyOrStringBodyResponseType(response, targetType);
     }
 
     @RequiredArgsConstructor
     static class ResponseTypeMapper {
         private final ObjectMapper objectMapper;
+
+        <R extends BaseApiResponse> R convertEmptyOrStringBodyResponseType(final EmptyOrStringBodyResponse response, final Class<R> targetType) {
+            try {
+                if (response == null) {
+                    return null;
+                }
+
+                final ApiResult apiResult = response.getApiResult();
+                final boolean isSuccess = response.isSuccess();
+                response.setApiResult(null);
+                // Clear apiResult to avoid circular reference
+                if (isSuccess && StringUtils.hasText(response.getBodyString())) {
+                    // If the response is successful and has no body, return an empty instance of the target type
+                    final String body = response.getBodyString();
+                    final R converted = objectMapper.readValue(body, targetType);
+                    converted.setApiResult(apiResult); // Restore apiResult after conversion
+                    return converted;
+                } else {
+                    final R converted = targetType.getDeclaredConstructor().newInstance();
+                    converted.setApiResult(apiResult); // Restore apiResult after conversion
+                    return converted;
+                }
+            } catch (Exception e) {
+                throw createApiFailureException(response, targetType, e);
+            }
+        }
 
         <R1 extends BaseApiResponse, R2 extends BaseApiResponse> R2 convertResponseType(final R1 response, final Class<R2> targetType) {
             try {

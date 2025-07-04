@@ -1,11 +1,14 @@
 package io.incognito.rest.client.helper;
 
+import org.springframework.http.HttpRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.ClientResponse;
+import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.function.Function;
@@ -98,6 +101,48 @@ public class ClientResponseProcessor {
                             result.setFailureMessage(String.format("Failed to call API. Status Code: [%d] %s", statusCode.value(), statusCode.getReasonPhrase()));
                             return Mono.error(new ApiFailureException(result));
                         });
+            } else if (clientResponse.statusCode().is3xxRedirection()) { // 3xx 상태 코드인 경우: Location 헤더를 통해 리다이렉션 URL을 추출한 뒤, GET 요청을 수행한다.
+                final HttpRequest req = clientResponse.request();
+                return clientResponse.bodyToMono(String.class)
+                        .switchIfEmpty(Mono.just(""))
+                        .flatMap(body -> {
+                            final String location = responseHeaders.getFirst("Location");
+                            try {
+                                final URI requestUrl = req.getURI();
+                                final URI redirectUrl = Opt.of(location)
+                                        .flatMap(locationStr -> {
+                                            try {
+                                                return Opt.of(URI.create(locationStr))
+                                                        .flatMap(uri -> {
+                                                            try {
+                                                                if (uri.getScheme() == null || uri.getScheme().isEmpty() || uri.getHost() == null || uri.getHost().isEmpty()) {
+                                                                    // 상대 경로인 경우, 원래 요청 URL을 기준으로 절대 경로로 변환
+                                                                    return Opt.of(requestUrl.resolve(locationStr));
+                                                                } else {
+                                                                    // 절대 경로인 경우 그대로 사용
+                                                                    return Opt.of(uri);
+                                                                }
+                                                            } catch (final Exception e) {
+                                                                return Opt.empty(); // 잘못된 URL 형식인 경우
+                                                            }
+                                                        });
+                                            } catch (final Exception e) {
+                                                return Opt.empty(); // 잘못된 URL 형식인 경우
+                                            }
+                                        })
+                                        .orElseGet(() -> URI.create(requestUrl.toString()));
+//                            final ApiResult result = setupApiResult(statusCode, responseHeaders);
+                                return WebClient.create().get().uri(redirectUrl)
+                                        .headers(headers -> headers.putAll(responseHeaders))
+                                        .exchangeToMono(exchangeResponse(responseType));
+//                            return Mono.error(new ApiFailureException(result));
+                            } catch (final Exception e) {
+                                final ApiResult result = setupApiResult(statusCode, responseHeaders);
+                                result.setFailureDetail(body);
+                                result.setFailureMessage(String.format("Failed to redirect to %s. Error: %s", location, e.getMessage()));
+                                return Mono.error(new ApiFailureException(result, e.getMessage(), e));
+                            }
+                        });
             } else { // 정상 응답 처리
                 // EmptyOrStringBodyResponse 타입의 응답 처리 (예: empty response body 응답 또는 문자열 응답)
                 if (TypeUtil.isAssignableTypeOf(responseType, EmptyOrStringBodyResponse.class)) {
@@ -157,7 +202,7 @@ public class ClientResponseProcessor {
                 .retryWhen(Retry.backoff(
                         Opt.of(retryCount).filter(i -> i > 0).orElse(0),
                         Opt.of(retryDelay).orElse(Duration.ofSeconds(1))).onRetryExhaustedThrow(((retryBackoffSpec, retrySignal) -> findApiFailureException(retrySignal.failure()).orElseGet(() -> {
-                                final String message = "Retry exhausted after " + retrySignal.totalRetriesInARow() + " retries.";
+                                final String message = "Retry exhausted after " + retrySignal.totalRetriesInARow() + " retries. Message: " + retrySignal.failure().getMessage();
                                 final ApiResult failureResult = setupApiResult(ApiResultCode.EXHAUSTED_RETIRES, responseHeaders, retrySignal.failure(), err -> message, Throwable::getMessage);
                                 return new ApiFailureException(failureResult, message, retrySignal.failure());
                             }))))
