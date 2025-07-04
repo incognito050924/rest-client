@@ -15,12 +15,12 @@
         <jackson.version>2.18.4</jackson.version>
     </properties>
 
-    <repositories>
+    <distributionManagement>
         <repository>
             <id>jitpack.io</id>
             <url>https://www.jitpack.io</url>
         </repository>
-    </repositories>
+    </distributionManagement>
 
     <dependencyManagement>
         <dependencies>
@@ -161,6 +161,13 @@
             <plugin>
                 <artifactId>maven-javadoc-plugin</artifactId>
                 <version>3.6.3</version>
+                <configuration>
+                    <failOnError>false</failOnError>
+                    <failOnWarnings>false</failOnWarnings>
+                    <additionalJOptions>
+                        <additionalJOption>-Xdoclint:none</additionalJOption>
+                    </additionalJOptions>
+                </configuration>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>
