@@ -13,6 +13,7 @@ import io.incognito.rest.client.exceptions.ApiFailureException;
 import io.incognito.rest.client.types.dto.ApiResult;
 import io.incognito.rest.client.types.dto.response.BaseApiResponse;
 import io.incognito.rest.client.types.dto.response.EmptyOrStringBodyResponse;
+import io.incognito.rest.client.util.KotlinCompatibilityUtil;
 import io.incognito.rest.client.types.enums.ApiResultCode;
 import io.incognito.rest.client.util.Opt;
 import lombok.RequiredArgsConstructor;
@@ -52,7 +53,8 @@ public class ResponseTypeConverter {
                     converted.setApiResult(apiResult); // Restore apiResult after conversion
                     return converted;
                 } else {
-                    final R converted = targetType.getDeclaredConstructor().newInstance();
+                    // Kotlin 호환성을 고려한 인스턴스 생성 사용
+                    final R converted = KotlinCompatibilityUtil.createInstance(targetType);
                     converted.setApiResult(apiResult); // Restore apiResult after conversion
                     return converted;
                 }

@@ -16,6 +16,7 @@ import java.util.Optional;
 import javax.net.ssl.SSLException;
 
 import io.incognito.rest.client.util.Opt;
+import io.incognito.rest.client.util.KotlinCompatibilityUtil;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.epoll.EpollChannelOption;
 import io.netty.handler.ssl.SslContextBuilder;
@@ -37,6 +38,16 @@ public abstract class HttpClientConfigurer {
 
     public abstract ConnectionObserver connectionObserver();
     public abstract ObjectMapper webClientObjectMapper();
+
+    /**
+     * Kotlin 호환성을 고려한 기본 ObjectMapper를 생성합니다.
+     * 서브클래스에서 webClientObjectMapper()를 구현할 때 참고용으로 사용할 수 있습니다.
+     *
+     * @return Kotlin 호환성이 개선된 기본 ObjectMapper
+     */
+    protected ObjectMapper createKotlinCompatibleMapper() {
+        return KotlinCompatibilityUtil.createKotlinCompatibleMapper();
+    }
 
     /**
      * HTTP Connection Pool 설정

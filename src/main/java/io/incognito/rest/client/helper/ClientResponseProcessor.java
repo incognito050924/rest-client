@@ -23,6 +23,7 @@ import io.incognito.rest.client.types.dto.response.IBaseResponse;
 import io.incognito.rest.client.types.enums.ApiResultCode;
 import io.incognito.rest.client.util.Opt;
 import io.incognito.rest.client.util.TypeUtil;
+import io.incognito.rest.client.util.KotlinCompatibilityUtil;
 import io.netty.handler.ssl.SslHandshakeTimeoutException;
 import io.netty.handler.timeout.ReadTimeoutException;
 import reactor.core.publisher.Mono;
@@ -65,6 +66,7 @@ public class ClientResponseProcessor {
 
     /**
      * RESP 타입의 객체를 생성한다.
+     * Kotlin 호환성을 고려하여 여러 방법으로 인스턴스 생성을 시도합니다.
      *
      * @param responseType 생성할 타입의 클래스 객체
      * @param <RESP> 생성할 타입
@@ -72,8 +74,10 @@ public class ClientResponseProcessor {
      */
     public static <RESP extends IBaseResponse> Mono<RESP> createResponseInstance(final Class<RESP> responseType, final HttpStatus status, final MultiValueMap<String, String> responseHeaders) {
         try {
-            return Mono.just(Opt.of(responseType).get().newInstance());
-        } catch (InstantiationException | IllegalAccessException e) {
+            // Kotlin 호환성을 고려한 인스턴스 생성
+            RESP instance = KotlinCompatibilityUtil.createInstance(responseType);
+            return Mono.just(instance);
+        } catch (Exception e) {
             return Mono.error(new ApiFailureException(deserializeFailure(status, responseHeaders, e.getMessage()), e.getMessage(), e));
         }
     }
@@ -164,7 +168,9 @@ public class ClientResponseProcessor {
                 return clientResponse.bodyToMono(responseType)
                         .switchIfEmpty(Mono.defer(() -> {
                             try {
-                                return Mono.just(responseType.newInstance());
+                                // Kotlin 호환성을 고려한 인스턴스 생성 사용
+                                RESP instance = KotlinCompatibilityUtil.createInstance(responseType);
+                                return Mono.just(instance);
                             } catch (final Exception e) {
                                 return Mono.error(new ApiFailureException(deserializeFailure(statusCode, responseHeaders, e.getMessage()), e.getMessage(), e));
                             }
