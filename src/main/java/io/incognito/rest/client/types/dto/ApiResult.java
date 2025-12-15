@@ -2,9 +2,12 @@ package io.incognito.rest.client.types.dto;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.util.MultiValueMap;
+
+import io.incognito.rest.client.util.MultiValueMapDeserializer;
 
 import java.util.Map;
 
@@ -26,6 +29,7 @@ import lombok.experimental.SuperBuilder;
 @Setter
 public class ApiResult {
     private HttpStatus status;
+    @JsonDeserialize(using = MultiValueMapDeserializer.class)
     private MultiValueMap<String, String> responseHeaders;
     private ApiResultCode resultCode;
     private String failureMessage;
